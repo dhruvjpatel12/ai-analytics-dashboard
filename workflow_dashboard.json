@@ -1,0 +1,347 @@
+{
+  "name": "n8n(updated)_DA",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload-data",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": " http://127.0.0.1:5500"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -112,
+        160
+      ],
+      "id": "1a7a66a3-7a48-4d8e-b397-3521c57ac086",
+      "name": "Webhook",
+      "webhookId": "b5d0b4bc-cfc1-4ee8-af5a-287177b1bfe0"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "file",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        176,
+        160
+      ],
+      "id": "8308b16a-0c37-4c84-b0c6-e69300cc98ee",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// AI Analytics Engine - Part 1\n// Run Once for All Items\n// ======================================================\n\n// Read all incoming rows\nconst items = $input.all();\nconst rawRows = items.map(item => item.json);\n\n// ------------------------------------------------------\n// Helper Functions\n// ------------------------------------------------------\n\nconst isEmpty = (value) => {\n    return value === null ||\n           value === undefined ||\n           value === \"\" ||\n           value === \"NULL\" ||\n           value === \"null\" ||\n           value === \"NaN\";\n};\n\nconst toNumber = (value) => {\n    if (typeof value === \"number\") return value;\n\n    const num = Number(\n        String(value)\n            .replace(/,/g, \"\")\n            .replace(/%/g, \"\")\n            .trim()\n    );\n\n    return isNaN(num) ? null : num;\n};\n\n// ------------------------------------------------------\n// Clean Dataset\n// ------------------------------------------------------\n\nconst cleanedRows = rawRows.map(row => {\n\n    const clean = {};\n\n    Object.entries(row).forEach(([key, value]) => {\n\n        if (typeof value === \"string\") {\n            value = value.trim();\n        }\n\n        clean[key] = value;\n\n    });\n\n    return clean;\n\n});\n\n// ------------------------------------------------------\n// Dataset Metadata\n// ------------------------------------------------------\n\nconst metadata = {\n\n    total_rows: cleanedRows.length,\n\n    total_columns:\n        cleanedRows.length > 0\n            ? Object.keys(cleanedRows[0]).length\n            : 0,\n\n    generated_at: new Date().toISOString()\n\n};\n\n// ------------------------------------------------------\n// Detect Schema\n// ------------------------------------------------------\n\nconst schema = [];\n\nif (cleanedRows.length > 0) {\n\n    const firstRow = cleanedRows[0];\n\n    Object.keys(firstRow).forEach(column => {\n\n        let numeric = 0;\n        let missing = 0;\n        let unique = new Set();\n\n        cleanedRows.forEach(row => {\n\n            const value = row[column];\n\n            if (isEmpty(value)) {\n\n                missing++;\n\n            } else {\n\n                unique.add(value);\n\n                if (toNumber(value) !== null) {\n                    numeric++;\n                }\n\n            }\n\n        });\n\n        schema.push({\n\n            column,\n\n            detected_type:\n                numeric > cleanedRows.length * 0.7\n                    ? \"numeric\"\n                    : \"categorical\",\n\n            missing,\n\n            unique_values: unique.size\n\n        });\n\n    });\n\n}\n\n// ------------------------------------------------------\n// Dataset Profile\n// ------------------------------------------------------\n\nconst profile = {\n\n    numeric_columns:\n        schema.filter(c => c.detected_type === \"numeric\")\n              .map(c => c.column),\n\n    categorical_columns:\n        schema.filter(c => c.detected_type === \"categorical\")\n              .map(c => c.column)\n\n};\n// ======================================================\n// KPI ENGINE\n// ======================================================\n\nconst kpis = {\n    total_records: cleanedRows.length,\n    total_numeric_columns: profile.numeric_columns.length,\n    total_categorical_columns: profile.categorical_columns.length,\n    total_missing_values: 0,\n    completeness: 0\n};\n\nschema.forEach(col => {\n    kpis.total_missing_values += col.missing;\n});\n\nconst totalCells = metadata.total_rows * metadata.total_columns;\n\nkpis.completeness =\n    totalCells > 0\n        ? (((totalCells - kpis.total_missing_values) / totalCells) * 100).toFixed(2)\n        : 0;\n\n// ======================================================\n// STATISTICAL ANALYSIS\n// ======================================================\n\nconst statistics = {};\n\nprofile.numeric_columns.forEach(column => {\n\n    const values = cleanedRows\n        .map(r => toNumber(r[column]))\n        .filter(v => v !== null);\n\n    if (!values.length) return;\n\n    values.sort((a, b) => a - b);\n\n    const sum = values.reduce((a, b) => a + b, 0);\n\n    const mean = sum / values.length;\n\n    const median =\n        values.length % 2\n            ? values[Math.floor(values.length / 2)]\n            : (\n                values[values.length / 2 - 1] +\n                values[values.length / 2]\n              ) / 2;\n\n    const variance =\n        values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) /\n        values.length;\n\n    statistics[column] = {\n\n        count: values.length,\n\n        min: Math.min(...values),\n\n        max: Math.max(...values),\n\n        mean: Number(mean.toFixed(2)),\n\n        median: Number(median.toFixed(2)),\n\n        sum: Number(sum.toFixed(2)),\n\n        standard_deviation: Number(Math.sqrt(variance).toFixed(2))\n\n    };\n\n});\n\n// ======================================================\n// CATEGORY ANALYSIS\n// ======================================================\n\nconst categoryAnalysis = {};\n\nprofile.categorical_columns.forEach(column => {\n\n    const freq = {};\n\n    cleanedRows.forEach(row => {\n\n        const value = row[column];\n\n        if (isEmpty(value)) return;\n\n        freq[value] = (freq[value] || 0) + 1;\n\n    });\n\n    const sorted = Object.entries(freq)\n        .sort((a, b) => b[1] - a[1]);\n\n    categoryAnalysis[column] = {\n\n        unique_categories: sorted.length,\n\n        top_categories: sorted.slice(0, 10)\n\n    };\n\n});\n\n// ======================================================\n// BASIC DATASET INSIGHTS\n// ======================================================\n\nconst insights = [];\n\ninsights.push(\n    `Dataset contains ${metadata.total_rows} records and ${metadata.total_columns} columns.`\n);\n\ninsights.push(\n    `${profile.numeric_columns.length} numeric columns detected.`\n);\n\ninsights.push(\n    `${profile.categorical_columns.length} categorical columns detected.`\n);\n\nif (kpis.total_missing_values > 0) {\n\n    insights.push(\n        `${kpis.total_missing_values} missing values found in the dataset.`\n    );\n\n} else {\n\n    insights.push(\n        \"No missing values detected.\"\n    );\n\n}\n// ======================================================\n// RELATIONSHIP DETECTION\n// ======================================================\n\nconst relationships = [];\n\nprofile.numeric_columns.forEach(column => {\n\n    const stats = statistics[column];\n\n    if (!stats) return;\n\n    relationships.push({\n        column,\n        average: stats.mean,\n        minimum: stats.min,\n        maximum: stats.max,\n        spread: Number((stats.max - stats.min).toFixed(2))\n    });\n\n});\n\n// ======================================================\n// OUTLIER DETECTION (IQR)\n// ======================================================\n\nconst outliers = {};\n\nprofile.numeric_columns.forEach(column => {\n\n    const values = cleanedRows\n        .map(r => toNumber(r[column]))\n        .filter(v => v !== null)\n        .sort((a,b)=>a-b);\n\n    if(values.length < 4) return;\n\n    const q1 = values[Math.floor(values.length * 0.25)];\n    const q3 = values[Math.floor(values.length * 0.75)];\n\n    const iqr = q3 - q1;\n\n    const lower = q1 - 1.5 * iqr;\n    const upper = q3 + 1.5 * iqr;\n\n    outliers[column] = values.filter(v => v < lower || v > upper);\n\n});\n\n// ======================================================\n// DATA QUALITY ANALYSIS\n// ======================================================\n\nconst quality_analysis = {\n\n    total_rows: metadata.total_rows,\n\n    total_columns: metadata.total_columns,\n\n    missing_values: kpis.total_missing_values,\n\n    completeness: kpis.completeness,\n\n    duplicate_rows:\n        cleanedRows.length -\n        new Set(cleanedRows.map(r => JSON.stringify(r))).size\n\n};\n\nquality_analysis.quality_score = Number(\n\n    Math.max(\n\n        0,\n\n        (\n            quality_analysis.completeness\n            -\n            quality_analysis.duplicate_rows\n        )\n\n    ).toFixed(2)\n\n);\n\n// ======================================================\n// CHART RECOMMENDATION ENGINE\n// ======================================================\n\nconst charts = [];\n\nprofile.numeric_columns.forEach(column=>{\n\n    charts.push({\n\n        title: column,\n\n        chart_type: \"bar\",\n\n        labels: cleanedRows\n                    .slice(0,10)\n                    .map((_,i)=>`Row ${i+1}`),\n\n        values: cleanedRows\n                    .slice(0,10)\n                    .map(r=>toNumber(r[column]) || 0)\n\n    });\n\n});\n\nprofile.categorical_columns.forEach(column=>{\n\n    const freq={};\n\n    cleanedRows.forEach(r=>{\n\n        const v=r[column];\n\n        if(isEmpty(v)) return;\n\n        freq[v]=(freq[v]||0)+1;\n\n    });\n\n    const top=Object.entries(freq)\n        .sort((a,b)=>b[1]-a[1])\n        .slice(0,10);\n\n    charts.push({\n\n        title:column,\n\n        chart_type:\"pie\",\n\n        labels:top.map(x=>x[0]),\n\n        values:top.map(x=>x[1])\n\n    });\n\n});\n\n// ======================================================\n// SAMPLE DATA\n// ======================================================\n\nconst sample_data = cleanedRows.slice(0,10);\n\n// ======================================================\n// CHART SUMMARY\n// ======================================================\n\nconst chart_summary = charts.map(c=>({\n\n    title:c.title,\n\n    type:c.chart_type\n\n}));\n// ======================================================\n// FINAL REPORT OBJECT\n// ======================================================\n\nconst report = {\n    generated_at: new Date().toISOString(),\n    engine: \"AI Analytics Engine v2.0\",\n    schema_independent: true,\n    total_records: metadata.total_rows,\n    total_columns: metadata.total_columns,\n    quality_score: quality_analysis.quality_score,\n    summary: insights\n};\n\n// ======================================================\n// AI INPUT PAYLOAD\n// ======================================================\n\nconst ai_payload = {\n    report,\n    metadata,\n    schema,\n    profile,\n    kpis,\n    statistics,\n    relationships,\n    quality_analysis,\n    category_analysis: categoryAnalysis,\n    chart_summary\n};\n\n// ======================================================\n// RETURN\n// ======================================================\n\nreturn [{\n    json: {\n\n        metadata,\n\n        schema,\n\n        profile,\n\n        kpis,\n\n        statistics,\n\n        relationships,\n\n        quality_analysis,\n\n        category_analysis: categoryAnalysis,\n\n        charts,\n\n        chart_summary,\n\n        sample_data,\n\n        report,\n\n        ai_payload,\n\n        data: cleanedRows\n\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        160
+      ],
+      "id": "b702125e-fd22-49b9-98b2-2b508bc5919b",
+      "name": "Analytical Engine"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst metadata = item.metadata ?? {};\nconst profile = item.profile ?? {};\nconst kpis = item.kpis ?? {};\nconst statistics = item.statistics ?? {};\nconst relationships = item.relationships ?? {};\nconst quality = item.quality_analysis ?? {};\nconst charts = item.charts ?? [];\nconst sampleData = item.sample_data ?? [];\nconst executiveSummary = item.executive_summary ?? \"\";\nconst managementSummary = item.management_summary ?? \"\";\nconst findings =\n    item.key_findings ??\n    item.findings ??\n    [];\nconst insights =\n    item.business_insights ??\n    [];\nconst risks =\n    item.risks ??\n    [];\nconst opportunities =\n    item.opportunities ??\n    [];\nconst recommendations =\n    item.recommendations ??\n    [];\nconst list = arr =>\n    arr.length\n        ? `<ul>${arr.map(i=>`<li>${i}</li>`).join(\"\")}</ul>`\n        : \"<p>No information available.</p>\";\n\nlet html = `\n<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>AI Analytics Dashboard</title>\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>\n<style>\n*{\n    margin:0;\n    padding:0;\n    box-sizing:border-box;\n    font-family:\"Inter\",\"Segoe UI\",Arial,sans-serif;\n}\nbody{\n    background:#f4f6f9;\n    padding:30px;\n    color:#1f2937;\n}\n.container{\n    max-width:1500px;\n    margin:auto;\n}\nheader{\n    background:#1e3a8a;\n    color:white;\n    padding:35px 40px;\n    border-radius:12px;\n    margin-bottom:25px;\n}\n.header-content {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    width: 100%;\n}\n.header-text h1{\n    font-size:32px;\n    font-weight:600;\n    margin-bottom:10px;\n}\n.header-text p{\n    font-size:15px;\n    opacity:.85;\n}\n.action-buttons{\n    display:flex;\n    gap:15px;\n    align-items:center;\n}\n.action-buttons button{\n    background:white;\n    color:#1e3a8a;\n    border:none;\n    padding:12px 22px;\n    border-radius:8px;\n    font-size:14px;\n    font-weight:600;\n    cursor:pointer;\n    transition:.3s;\n}\n.action-buttons button:hover{\n    background:#dbeafe;\n    transform:translateY(-2px);\n}\n.grid{\n    display:grid;\n    grid-template-columns:repeat(4,1fr);\n    gap:20px;\n    margin-bottom:25px;\n}\n.card{\n    background:white;\n    padding:25px;\n    border-radius:12px;\n    border:1px solid #e5e7eb;\n    box-shadow:0 4px 12px rgba(0,0,0,.05);\n}\n.card h3{\n    color:#6b7280;\n    font-size:14px;\n    font-weight:500;\n    margin-bottom:12px;\n}\n.card h2{\n    color:#1e3a8a;\n    font-size:34px;\n    font-weight:700;\n}\n.section{\n    background:white;\n    padding:30px;\n    border-radius:12px;\n    margin-bottom:25px;\n    border:1px solid #e5e7eb;\n    box-shadow:0 4px 12px rgba(0,0,0,.05);\n}\n.section h2{\n    color:#111827;\n    font-size:21px;\n    font-weight:600;\n    margin-bottom:18px;\n}\ntable{\n    width:100%;\n    border-collapse:collapse;\n    margin-top:15px;\n}\nth{\n    background:#1e3a8a;\n    color:white;\n    padding:12px;\n    text-align:left;\n    font-size:14px;\n}\ntd{\n    padding:12px;\n    border-bottom:1px solid #e5e7eb;\n    font-size:14px;\n}\ntr:hover{\n    background:#f8fafc;\n}\n.chart-grid{\n    display:grid;\n    grid-template-columns:repeat(2,1fr);\n    gap:25px;\n}\n.chart-card{\n    background:#ffffff;\n    padding:20px;\n    border-radius:12px;\n    border:1px solid #e5e7eb;\n}\n.chart-card h3{\n    font-size:16px;\n    color:#374151;\n    margin-bottom:15px;\n}\n.chart-wrapper{\n    height:300px;\n    position:relative;\n}\nfooter{\n    text-align:center;\n    padding:30px;\n    color:#6b7280;\n    font-size:14px;\n}\n@media(max-width:900px){\nheader{\n    flex-direction:column;\n    align-items:flex-start;\n    gap:20px;\n}\n.header-content{\n    flex-direction:column;\n    align-items:flex-start;\n    gap:15px;\n}\n.action-buttons{\n    width:100%;\n}\n.action-buttons button{\n    flex:1;\n}\n.grid{\n    grid-template-columns:repeat(2,1fr);\n}\n.chart-grid{\n    grid-template-columns:1fr;\n}\n}\n</style>\n</head>\n<body>\n<div class=\"container\">\n\n<header>\n<div class=\"header-content\">\n<div class=\"header-text\">\n<h1>AI MIS Analytics Dashboard</h1>\n<p>Generated On: ${new Date().toLocaleString()}</p>\n</div>\n<div class=\"action-buttons\">\n<button onclick=\"downloadPDF()\">Export Report</button>\n<button onclick=\"refreshData()\">Refresh Dashboard</button>\n</div>\n</div>\n</header>\n\n<!-- KPI Cards -->\n<div class=\"grid\">\n<div class=\"card\"><h3>Total Records</h3><h2>${metadata.total_rows ?? \"-\"}</h2></div>\n<div class=\"card\"><h3>Total Columns</h3><h2>${metadata.total_columns ?? \"-\"}</h2></div>\n<div class=\"card\"><h3>Quality Score</h3><h2>${quality.quality_score ?? \"-\"}</h2></div>\n<div class=\"card\"><h3>Completeness</h3><h2>${kpis.completeness ?? \"-\"}%</h2></div>\n</div>\n\n<!-- Data Quality -->\n<div class=\"section\">\n<h2>Data Quality</h2>\n<table>\n<tr><th>Metric</th><th>Value</th></tr>\n<tr><td>Total Rows</td><td>${quality.total_rows ?? \"-\"}</td></tr>\n<tr><td>Total Columns</td><td>${quality.total_columns ?? \"-\"}</td></tr>\n<tr><td>Missing Values</td><td>${quality.missing_values ?? \"-\"}</td></tr>\n<tr><td>Duplicate Rows</td><td>${quality.duplicate_rows ?? \"-\"}</td></tr>\n<tr><td>Completeness</td><td>${quality.completeness ?? \"-\"}%</td></tr>\n<tr><td>Quality Score</td><td>${quality.quality_score ?? \"-\"}</td></tr>\n</table>\n</div>\n\n<!-- Charts -->\n<div class=\"section\">\n<h2>Charts</h2>\n<div class=\"chart-grid\">\n`;\ncharts.forEach((chart,index)=>{\nhtml += `\n<div class=\"chart-card\">\n<h3>${chart.title}</h3>\n<div class=\"chart-wrapper\"><canvas id=\"chart${index}\"></canvas></div>\n</div>\n`;\n});\nhtml += `\n</div>\n</div>\n\n<!-- Sample Dataset -->\n<div class=\"section\">\n<h2>Sample Dataset</h2>\n`;\nif(sampleData.length){\nconst columns = Object.keys(sampleData[0]);\nhtml += \"<table><tr>\";\ncolumns.forEach(col=>html += `<th>${col}</th>`);\nhtml += \"</tr>\";\nsampleData.forEach(row=>{\nhtml += \"<tr>\";\ncolumns.forEach(col=>html += `<td>${row[col] ?? \"\"}</td>`);\nhtml += \"</tr>\";\n});\nhtml += \"</table>\";\n}else{\nhtml += \"<p>No sample data available.</p>\";\n}\nhtml += `\n</div>\n\n<!-- Statistics -->\n<div class=\"section\">\n<h2>Statistics</h2>\n<table>\n<tr><th>Column</th><th>Count</th><th>Min</th><th>Max</th><th>Mean</th><th>Median</th></tr>\n`;\nObject.entries(statistics).forEach(([column, stats]) => {\nhtml += `\n<tr>\n<td>${column}</td>\n<td>${stats.count ?? \"-\"}</td>\n<td>${stats.min ?? \"-\"}</td>\n<td>${stats.max ?? \"-\"}</td>\n<td>${stats.mean ?? \"-\"}</td>\n<td>${stats.median ?? \"-\"}</td>\n</tr>\n`;\n});\nhtml += `\n</table>\n</div>\n\n<!-- Executive Summary -->\n<div class=\"section\">\n<h2>Executive Summary</h2>\n<p>${executiveSummary}</p>\n</div>\n\n<!-- Key Findings -->\n<div class=\"section\">\n<h2>Key Findings</h2>\n${list(findings)}\n</div>\n\n<!-- Business Insights -->\n<div class=\"section\">\n<h2>Business Insights</h2>\n${list(insights)}\n</div>\n\n<!-- Risks -->\n<div class=\"section\">\n<h2>Risks</h2>\n${list(risks)}\n</div>\n\n<!-- Opportunities -->\n<div class=\"section\">\n<h2>Opportunities</h2>\n${list(opportunities)}\n</div>\n\n<!-- Footer -->\n<footer>Generated by AI Analytics Engine</footer>\n\n</div>\n\n<script>\n`;\ncharts.forEach((chart,index)=>{\nhtml += `\nnew Chart(document.getElementById(\"chart${index}\"), {\ntype:\"${chart.chart_type}\",\ndata:{\nlabels:${JSON.stringify(chart.labels)},\ndatasets:[{\nlabel:${JSON.stringify(chart.title)},\ndata:${JSON.stringify(chart.values)},\nborderWidth:2\n}]\n},\noptions:{\nresponsive:true,\nmaintainAspectRatio:false,\n}\n});\n`;\n});\nhtml += `\nfunction downloadPDF(){ window.print(); }\nfunction refreshData(){ location.reload(); }\n</script>\n</body>\n</html>\n`;\n\nreturn [\n{\njson: { html }\n}\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        176
+      ],
+      "id": "70afc1d1-d7ea-44f0-a0b6-ffa91af15fb0",
+      "name": "HTML Report"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1120,
+        176
+      ],
+      "id": "1c0d83d7-8191-4f93-92d6-eb2ba1343950",
+      "name": "Merge",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1616,
+        176
+      ],
+      "id": "bbf54bc6-ec3c-4b3a-b44a-be6d28d05fd5",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a senior Business Intelligence and Data Analytics consultant.\n\nAnalyze the provided analytics JSON and return ONLY valid JSON.\n\nReturn exactly this structure:\n\n{\n  \"executive_summary\": \"\",\n  \"management_summary\": \"\",\n  \"key_findings\": [],\n  \"business_insights\": [],\n  \"risks\": [],\n  \"opportunities\": [],\n  \"recommendations\": []\n}\n\nRules:\n- Return valid JSON only.\n- Do not use Markdown.\n- Do not wrap the JSON in code fences.\n- Focus on business impact and management decisions.\n- Keep executive_summary between 50-80 words.\n- Keep management_summary between 40-60 words.\n- Do not write long paragraphs.\n- Each item in key_findings, business_insights, risks, opportunities, and recommendations must be less than 15 words.\n- Return maximum 5 items in each array.\n- Use short actionable statements.\n- Write insights suitable for a dashboard, not a report.\n- Avoid repeating the same information across sections.\n\nChart Generation Rules:\n- Generate a maximum of 5 charts only.\n- Generate charts only when they provide meaningful business insights.\n- Prioritize management-level visuals over technical analysis.\n- Prefer:\n  1. Performance comparison charts\n  2. Category distribution charts\n  3. KPI trend charts\n  4. Business outcome charts\n- Avoid generating charts for every column.\n- Do not create charts for IDs, names, dates, or unique values.\n- Do not create duplicate charts showing similar information.\n- Ignore columns with low analytical value.\n- Each chart must answer a business question.",
+              "role": "model"
+            },
+            {
+              "content": "=={{ JSON.stringify($json.ai_payload, null, 2) }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        832,
+        -112
+      ],
+      "id": "20570b53-255b-4816-9d8c-f64382a45acd",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dHAJYuflqRTIDE88",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst aiPayload = {\n    dataset_overview: {\n        total_rows: data.metadata?.total_rows ?? 0,\n        total_columns: data.metadata?.total_columns ?? 0\n    },\n    kpis: data.kpis ?? {},\n    data_quality: {\n        completeness:\n            data.quality_analysis?.completeness ?? 0,\n        quality_score:\n            data.quality_analysis?.quality_score ?? 0,\n        missing_values:\n            data.quality_analysis?.missing_values ?? 0,\n        duplicate_rows:\n            data.quality_analysis?.duplicate_rows ?? 0\n    },\n    statistics:\n        data.statistics ?? {},\n    relationships:\n        data.relationships ?? {},\n    center_analysis:\n        data.profile ?? {},\n    chart_information:\n        data.charts ?? []\n};\nreturn [\n{\n    json:{\n        ai_payload: aiPayload\n    }\n}\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        -112
+      ],
+      "id": "1412224e-b976-4ceb-b4be-ad14e6128675",
+      "name": "AI Playload"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputRows = $input.all()\n.map(item => item.json);\nfunction normalize(text){\n    return String(text)\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g,\"\");\n}\nfunction detectColumn(columns, keywords){\n    return columns.find(col => {\n        const normalized = normalize(col);\n        return keywords.some(key =>\n            normalized.includes(key)\n        );\n    });\n}\nconst sampleRow = inputRows[0];\nconst columns = Object.keys(sampleRow);\nconst detected = {\n    student:\n    detectColumn(\n        columns,\n        [\n            \"student\",\n            \"name\",\n            \"candidate\",\n            \"employee\"\n        ]\n    ),\n    attendance:\n    detectColumn(\n        columns,\n        [\n            \"attendance\",\n            \"attend\",\n            \"present\",\n            \"percentage\"\n        ]\n    ),\n    status:\n    detectColumn(\n        columns,\n        [\n            \"placement\",\n            \"status\",\n            \"result\",\n            \"outcome\"\n        ]\n    ),\n    center:\n    detectColumn(\n        columns,\n        [\n            \"center\",\n            \"location\",\n            \"branch\"\n        ]\n    )\n\n};\nlet report = {\n    rows_received: inputRows.length,\n    rows_processed:0,\n    rows_removed:0,\n    detected_columns: detected,\n    issues:{\n        invalid_attendance:0,\n        duplicates:0,\n        empty_rows:0\n    }\n};\nlet cleanRows = [];\nlet duplicateCheck = new Set();\ninputRows.forEach(row=>{\n    let valid = true;\n    if(\n        Object.values(row)\n        .every(v =>\n            v === \"\" ||\n            v === null ||\n            v === undefined\n        )\n    ){\n        report.issues.empty_rows++;\n        report.rows_removed++;\n        return;\n    }\n    let cleaned = {};\n    Object.keys(row).forEach(col=>{\n        cleaned[\n            normalize(col)\n        ] = row[col];\n    });\n    if(detected.attendance){\n        let attendanceValue =\n        Number(row[detected.attendance]);\n        if(\n            isNaN(attendanceValue) ||\n            attendanceValue < 0 ||\n            attendanceValue > 100\n        ){\n            report.issues.invalid_attendance++;\n            report.rows_removed++;\n            valid=false;\n        }\n    }\n    let signature =\n    JSON.stringify(row);\n    if(duplicateCheck.has(signature)){\n        report.issues.duplicates++;\n        report.rows_removed++;\n        valid=false;\n    }\n    else{\n        duplicateCheck.add(signature);\n    }\n    if(valid){\n        cleanRows.push(row);\n    }\n});\nreport.rows_processed =\ncleanRows.length;\nreturn cleanRows.map(row=>({\n    json:row\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        160
+      ],
+      "id": "b798b1fe-b24c-4d6a-a5ff-fd972412fc5d",
+      "name": "Data Cleaner",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a senior Business Intelligence dashboard architect.\n\nAnalyze the provided analytics JSON.\n\nYour task is to automatically understand the dataset structure, identify the business domain, and select only the most valuable visualizations for an executive dashboard.\n\nReturn ONLY valid JSON.\n\nStructure:\n\n{\n\"dataset_type\":\"\",\n\"dashboard_focus\":\"\",\n\"recommended_charts\":[\n{\n\"title\":\"\",\n\"chart_type\":\"\",\n\"x_axis\":\"\",\n\"y_axis\":\"\",\n\"reason\":\"\"\n}\n]\n}\n\nChart Selection Rules:\n\n- Generate maximum 5 charts only.\n- Generate charts only when they provide actionable business insights.\n- Every chart must answer a clear management question.\n- Think like an executive dashboard designer, not a data analyst exploring columns.\n- Do not create a chart just because a column exists.\n\nStrictly avoid charts for:\n\n- IDs\n- Student IDs\n- Employee IDs\n- Customer IDs\n- Serial numbers\n- Names\n- Student names\n- Employee names\n- Customer names\n- Email addresses\n- Phone numbers\n- Addresses\n- URLs\n- Unique identifiers\n- Columns where every value is different\n- Raw timestamps without meaningful trends\n\nBefore creating a chart, evaluate:\n\n1. Does this visualization help management make a decision?\n2. Does this show comparison, distribution, trend, or relationship?\n3. Are the categories meaningful and not individual records?\n\nPreferred chart types:\n\n- Bar charts:\n  Use for comparing categories such as center, department, region, course, product, or status.\n\n- Pie/Doughnut charts:\n  Use only for meaningful proportions with fewer than 6 categories.\n\n- Line charts:\n  Use only for time-based trends.\n\n- Scatter charts:\n  Use only for meaningful relationships between numeric variables.\n\nAvoid:\n\n- Pie charts with many categories.\n- Charts with more than 10 categories.\n- Charts based on unique values.\n- Duplicate charts.\n- Technical profiling charts.\n- Record-level visualizations.\n\nPrioritize business fields such as:\n\n- Performance\n- Attendance\n- Placement\n- Status\n- Category\n- Region\n- Center\n- Course\n- Department\n- Revenue\n- Sales\n- Profit\n- Location\n\nIgnore fields that identify records rather than describe business performance.\n\nThe final output should represent a professional management dashboard with only high-value visualizations."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        144,
+        -112
+      ],
+      "id": "581b293b-3cc5-454e-bf1c-ba57af64ae42",
+      "name": "Visuals",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dHAJYuflqRTIDE88",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const geminiResponse = $input.first().json;\nconst text = \ngeminiResponse.content.parts[0].text;\nconst parsedJSON = JSON.parse(text);\nreturn [\n{\n    json: parsedJSON\n}\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        -112
+      ],
+      "id": "d4b8d675-c695-4c05-bc7b-c194b1f2c74d",
+      "name": "Json Parser"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Data Cleaner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analytical Engine": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Visuals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "HTML Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML Report": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Json Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Playload": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Cleaner": {
+      "main": [
+        [
+          {
+            "node": "Analytical Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Visuals": {
+      "main": [
+        [
+          {
+            "node": "AI Playload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Json Parser": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "54529a34-6e83-4b13-88af-89724c1cd07f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1c4e1f54e359d7ea04bf2c748b18d0b7252bd2a36d1a32afcf7dbc96bf5d4f18"
+  },
+  "nodeGroups": [],
+  "id": "gsYGyMRwaBIRnrRk",
+  "tags": []
+}
