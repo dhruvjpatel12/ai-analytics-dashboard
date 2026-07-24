@@ -78,6 +78,22 @@ Interactive Dashboard
 6. Explore the generated dashboard.
 
 ---
+## 📄 Sample AI Report
+
+This repository includes a sample AI-generated analytics report produced by the dashboard.
+
+### Download the Report
+
+📄 **[AI Analytics Report](reports/AI_Analytics_Report.pdf)**
+
+The report includes:
+
+- Executive Summary
+- KPI Dashboard
+- AI Business Insights
+- Charts
+- Data Quality Analysis
+- Sample Dataset Preview
 
 ## 📈 Dashboard Features
 
@@ -112,3 +128,5 @@ Data Science Engineering Student
 ---
 
 ## ⭐ If you found this project useful, consider giving it a star!
+
+
